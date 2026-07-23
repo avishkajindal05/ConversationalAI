@@ -1,0 +1,16 @@
+# Minimal dependency set for running the (mock-based) test suite in CI.
+# The tests never import the speech stack (faster-whisper / piper-tts), so
+# those heavy binaries are omitted to keep CI fast and reliable.
+fastapi
+langgraph
+langchain
+langchain-community
+langchain-ollama
+sqlalchemy
+pydantic>=2
+pydantic-settings
+PyYAML
+httpx
+fpdf2
+pytest
+pytest-cov

@@ -1,0 +1,21 @@
+# models.yaml
+# Model configuration settings (documentation; runtime reads env / settings.py)
+models:
+  conversation:
+    provider: "ollama"
+    name: "qwen3:8b-instruct-q4"
+    role: "Natural dialogue (conversation graph)"
+  scoring:
+    provider: "ollama"
+    name: "llama3.2"
+    role: "Mechanical scoring: grammar, vocabulary, fluency, engagement, confidence"
+  reasoning:
+    provider: "ollama"
+    name: "qwen3:8b-instruct-q4"
+    role: "Reasoning-heavy evaluation: recommendation, report"
+  stt:
+    provider: "faster-whisper"
+    name: "small"
+  tts:
+    provider: "piper"
+    name: "en_US-lessac-medium"

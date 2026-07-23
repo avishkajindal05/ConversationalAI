@@ -1,0 +1,22 @@
+# .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+# Virtual env
+.venv/
+# Environment
+.env
+# VS Code
+.vscode/
+# MacOS
+.DS_Store
+# Logs
+*.log
+# Runtime data: SQLite DB, recorded/synthesized audio, downloaded models
+/data/
+# Claude Code tooling (local, not part of the project)
+.claude/
+.agents/

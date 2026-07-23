@@ -1,0 +1,5 @@
+# app.yaml
+# Application configuration settings
+app_name: "English Coach"
+version: "0.1.0"
+environment: "development"
