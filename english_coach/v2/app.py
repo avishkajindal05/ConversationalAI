@@ -50,6 +50,8 @@ def get_chat_llm() -> ChatOllama:
         model=settings.voice_model,
         base_url=settings.ollama_host,
         num_predict=200,  # short, spoken-length replies
+        keep_alive="30m",  # keep the model resident so later turns skip reload
+        client_kwargs={"timeout": 300},  # fail out instead of hanging if Ollama stalls
     )
 
 
@@ -97,7 +99,8 @@ def handle_turn(user_text: str) -> None:
     with st.chat_message("user"):
         st.markdown(user_text)
     with st.chat_message("assistant"):
-        full = st.write_stream(stream_reply(get_chat_llm(), st.session_state.messages))
+        with st.spinner("Thinking… (the first reply after startup can take ~15s on CPU)"):
+            full = st.write_stream(stream_reply(get_chat_llm(), st.session_state.messages))
     audio = synthesize(full) if st.session_state.get("speak") else None
     st.session_state.messages.append({"role": "assistant", "content": full, "audio": audio})
 
