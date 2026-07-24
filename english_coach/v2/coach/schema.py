@@ -27,7 +27,7 @@ class Scores(BaseModel):
     grammar: int = 50
     confidence: int = 50
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     @field_validator("*", mode="before")
     @classmethod
@@ -50,7 +50,12 @@ class PriorVerdict(BaseModel):
     status: Status = "unchanged"
     evidence: str = ""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v: object) -> str:
+        return v if v in ("improved", "unchanged", "worse") else "unchanged"
 
 
 class NewIssue(BaseModel):
@@ -60,7 +65,20 @@ class NewIssue(BaseModel):
     category: Category = "general"
     severity: Severity = "medium"
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _coerce_category(cls, v: object) -> str:
+        # The small model often invents categories (e.g. "culture"); snap
+        # anything off-list back to "general" instead of failing the whole call.
+        allowed = {"fluency", "clarity", "vocabulary", "grammar", "confidence", "general"}
+        return v if v in allowed else "general"
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _coerce_severity(cls, v: object) -> str:
+        return v if v in ("low", "medium", "high") else "medium"
 
 
 class Analysis(BaseModel):
@@ -72,7 +90,7 @@ class Analysis(BaseModel):
     prior_issue_verdicts: list[PriorVerdict] = Field(default_factory=list)
     new_issues: list[NewIssue] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     @property
     def overall_score(self) -> float:
@@ -108,30 +126,45 @@ class Analysis(BaseModel):
 
 
 def validate_llm_payload(payload: object, prior_issues: list[dict]) -> Analysis:
-    """Strictly validate one LLM response before it can update learner data.
+    """Validate one LLM response before it can update learner data.
 
-    ``Analysis`` deliberately has safe defaults for application fallbacks, but
-    accepting those defaults for a partial model response would turn missing
-    information into misleading scores or accidentally resolve an issue.
+    Small local models are creative with JSON, so this is tolerant where it can
+    be (extra/missing optional keys, off-list categories, hallucinated verdicts
+    are cleaned away) but strict where it matters: the five scores must be
+    present, and every real prior issue must be judged so history is never
+    silently lost.
     """
     if not isinstance(payload, dict):
         raise ValueError("Analysis response must be a JSON object")
 
-    required_top_level = {
-        "scores", "summary", "strengths", "prior_issue_verdicts", "new_issues"
-    }
-    if set(payload) != required_top_level:
-        raise ValueError("Analysis response must contain exactly the required top-level keys")
-
     scores = payload.get("scores")
-    if not isinstance(scores, dict) or set(scores) != set(METRICS):
+    if not isinstance(scores, dict) or not set(METRICS).issubset(scores):
         raise ValueError("Analysis response must contain all five score metrics")
 
-    result = Analysis.model_validate(payload)
-    expected_descriptions = {issue["description"] for issue in prior_issues}
-    returned_descriptions = [verdict.description for verdict in result.prior_issue_verdicts]
-    if len(returned_descriptions) != len(set(returned_descriptions)):
-        raise ValueError("Analysis response contains duplicate prior-issue verdicts")
-    if set(returned_descriptions) != expected_descriptions:
+    # Keep only known keys; default the optional lists/summary. Extra keys the
+    # model invented are dropped rather than rejected.
+    cleaned: dict = {
+        "scores": {m: scores[m] for m in METRICS},
+        "summary": payload.get("summary") or "",
+        "strengths": payload.get("strengths") or [],
+        "prior_issue_verdicts": payload.get("prior_issue_verdicts") or [],
+        "new_issues": payload.get("new_issues") or [],
+    }
+
+    # Drop verdicts that don't match a real prior issue (hallucinations) and
+    # de-duplicate, then require that every real prior issue is still covered.
+    expected = {issue["description"] for issue in prior_issues}
+    seen: set[str] = set()
+    kept: list[dict] = []
+    for verdict in cleaned["prior_issue_verdicts"]:
+        if not isinstance(verdict, dict):
+            continue
+        desc = verdict.get("description")
+        if desc in expected and desc not in seen:
+            seen.add(desc)
+            kept.append(verdict)
+    cleaned["prior_issue_verdicts"] = kept
+    if seen != expected:
         raise ValueError("Analysis response must return one verdict for every prior issue")
-    return result
+
+    return Analysis.model_validate(cleaned)
