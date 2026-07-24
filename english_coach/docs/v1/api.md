@@ -1,4 +1,7 @@
-# API Reference
+# v1 API reference (legacy)
+
+> This API belongs to the parked v1 FastAPI platform. v2 has no HTTP API; see
+> the [v2 architecture](v2/architecture.md) for the active application's flow.
 
 ## FastAPI Backend
 

@@ -1,7 +1,7 @@
 # Roadmap
 
 ## Current focus — Communication Coach (active)
-The active app is `frontend/voice_bot.py` + the `coach/` package: a single
+The active app is `v2/app.py` + the `v2/coach/` package: a single
 Streamlit process that does voice/text chat (or transcript/audio upload),
 then runs one structured, Pydantic-validated `llama3.2` call to score
 communication and track whether prior issues improved/unchanged/worse across
@@ -11,10 +11,10 @@ process — no FastAPI, no LangGraph, no ORM. The larger platform below is
 
 Done this round:
 - [x] Streamed replies (token-by-token) for lower perceived latency
-- [x] Strict Pydantic schema + retry for the analysis (`coach/schema.py`, `coach/analysis.py`)
+- [x] Strict Pydantic schema + retry for the analysis (`v2/coach/schema.py`, `v2/coach/analysis.py`)
 - [x] Cross-session issue tracking: improved / unchanged / worse + evidence
 - [x] Transcript upload and audio upload as alternate entry points
-- [x] Progress view: score trends + issue tracker (`coach/db.py`)
+- [x] Progress view: score trends + issue tracker (`v2/coach/db.py`)
 - [x] Whisper tuned for CPU (greedy decode + VAD filter)
 
 Possible next:
@@ -81,7 +81,7 @@ Possible next:
 - [ ] Dashboard filters / per-skill deep dives
 - [ ] Deployment (Docker Compose for backend + frontend + Ollama)
 
-## Future (V2+)
+## Future 
 - [ ] Pronunciation scoring, speaking speed (WPM), pause detection
 - [ ] RAG over grammar references / CEFR guidelines
 - [ ] Multi-language support

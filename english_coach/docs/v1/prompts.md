@@ -1,4 +1,8 @@
-# Prompts Reference
+# v1 prompts reference (legacy)
+
+> These prompts belong to the parked v1 platform. The active v2 prompts live
+> with their implementation in `english_coach/coach/conversation.py` and
+> `english_coach/coach/analysis.py`.
 
 ## Conversation Prompts
 Located in `english_coach/prompts/conversation/`.

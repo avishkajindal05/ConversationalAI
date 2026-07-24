@@ -1,4 +1,7 @@
-# Development Log
+# v1 development log (legacy)
+
+> This log records the parked v1 platform. Active changes are documented in
+> [v2 changes](v2/changes.md).
 
 A chronological record of every significant change to English Coach, why it
 was made, and (where relevant) what failed and how it was fixed. Read this
