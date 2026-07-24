@@ -1,11 +1,26 @@
 # Roadmap
 
-## Current focus — Minimal Voice Bot (active)
-The active app is `frontend/voice_bot.py`: a single Streamlit process that
-does voice/text chat on any topic and gives feedback when the conversation
-ends. Whisper + `llama3.2` (Ollama) + Piper, all in one process — no FastAPI,
-no LangGraph, no database. The larger platform below is **parked** (kept in
-the repo, not the default) to keep the working path small and reliable.
+## Current focus — Communication Coach (active)
+The active app is `frontend/voice_bot.py` + the `coach/` package: a single
+Streamlit process that does voice/text chat (or transcript/audio upload),
+then runs one structured, Pydantic-validated `llama3.2` call to score
+communication and track whether prior issues improved/unchanged/worse across
+sessions (SQLite). Whisper + `llama3.2` (Ollama, streamed) + Piper, all in one
+process — no FastAPI, no LangGraph, no ORM. The larger platform below is
+**parked** (kept in the repo, not the default).
+
+Done this round:
+- [x] Streamed replies (token-by-token) for lower perceived latency
+- [x] Strict Pydantic schema + retry for the analysis (`coach/schema.py`, `coach/analysis.py`)
+- [x] Cross-session issue tracking: improved / unchanged / worse + evidence
+- [x] Transcript upload and audio upload as alternate entry points
+- [x] Progress view: score trends + issue tracker (`coach/db.py`)
+- [x] Whisper tuned for CPU (greedy decode + VAD filter)
+
+Possible next:
+- [ ] Sentence-level TTS streaming (start speaking before the full reply is generated)
+- [ ] Dedupe near-duplicate issues across sessions via embedding similarity
+- [ ] Silence-detection auto-stop for hands-free voice turns
 
 ---
 

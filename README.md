@@ -1,13 +1,15 @@
-# ConversationalAI - Voice Bot
+# ConversationalAI - Communication Coach
 
-A small, offline **voice bot**: have a spoken (or typed) conversation on any
-everyday topic, then end the conversation to get friendly feedback on your
-spoken English and communication. Everything runs locally with open-source
-models.
+A small, offline **communication coach**. Have a spoken or typed conversation
+(or upload a transcript / audio file); when you end it, the bot scores your
+communication, tracks whether previously flagged issues **improved / stayed
+the same / got worse** across sessions, and charts your progress. Everything
+runs locally on open-source models.
 
-## Quick start (the voice bot)
+## Quick start
 
-This is the primary app — **one Streamlit process**, no backend, no database.
+The primary app is **one Streamlit process** — Whisper + `llama3.2` (Ollama) +
+Piper, plus a tiny SQLite file for progress. No backend server, no LangGraph.
 
 **1. Install**
 ```bash
@@ -27,22 +29,46 @@ ollama serve
 streamlit run english_coach/frontend/voice_bot.py
 ```
 
-Open the URL it prints (default http://localhost:8501). Talk (record a voice
-message) or type, chat about anything, then click **End conversation & get
-feedback** in the sidebar.
+Open the URL it prints (default http://localhost:8501). Enter a **Candidate
+ID**, pick an input method, have the conversation (or upload), then
+**End conversation & analyse**. Switch the sidebar **View** to **Progress** to
+see score trends and the issue tracker across sessions with the same ID.
 
 ### How it works
 ```
-microphone --> Faster-Whisper (STT) --> Ollama LLM (llama3.2) --> Piper (TTS) --> speaker
-                                              |
-                        (on "End") analyse the transcript --> feedback
+live text / live voice / upload transcript / upload audio
+        |                                    |
+        v                                    v
+  Faster-Whisper (STT) --> llama3.2 (Ollama, streamed) --> Piper (TTS)
+        |
+        v  (on "Analyse")
+  transcript + issues still open from the last session
+        |
+        v
+  one structured, Pydantic-validated llama3.2 call:
+    scores + per-issue verdicts (improved/unchanged/worse) + new issues + summary
+        |
+        v
+  saved to SQLite  -->  Progress view: score trends + issue tracker
 ```
-All models are open-source and run offline: **Faster-Whisper** (speech-to-text),
-**llama3.2** via **Ollama** (chat + feedback), **Piper** (text-to-speech). On
-first run, Whisper and Piper download their model files once.
 
-> On CPU, a voice turn takes roughly 15-20s end to end (transcribe + generate +
-> speak). That's expected for local inference.
+**Design notes**
+- **Streamed replies** — the bot's reply appears token-by-token as it's
+  generated, so on CPU you start reading a few seconds in instead of waiting
+  for the whole reply. The full text is still captured for scoring.
+- **Structured, validated analysis** — the scoring call returns JSON validated
+  against a Pydantic schema (`coach/schema.py`) and retries on invalid output,
+  because a 3B model isn't perfectly reliable at strict JSON.
+- **Cross-session tracking** — a single SQLite table (`data/coach.db`) carries
+  open issues forward so the next session can judge whether each improved.
+- **Cascaded voice, on purpose** — turn-based Whisper→LLM→Piper stays
+  controllable and hands you a clean transcript to score. Native
+  speech-to-speech (e.g. Moshi) is lower-latency but can't be steered or scored
+  the same way, and doesn't fit CPU-only hardware.
+
+> On CPU a turn is roughly 15-20s end to end (transcribe + generate + speak),
+> and the analysis is ~10s. That's expected for local inference; keeping the
+> model warm (Ollama `keep_alive`) avoids reload cost between turns.
 
 ---
 

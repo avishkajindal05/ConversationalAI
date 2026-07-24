@@ -1,13 +1,16 @@
 # ─── frontend/voice_bot.py ───
-"""Minimal single-process voice bot.
+"""Communication coach - single-process voice bot.
 
-Have a spoken (or typed) conversation on any topic; when you end it, the bot
-analyses the chat and gives you feedback. Everything runs in this one
-Streamlit process using open-source models:
+Have a spoken or typed conversation (or upload a transcript / audio file);
+when you end it, the bot scores your communication, tracks whether previously
+flagged issues improved, and shows your progress across sessions. Everything
+runs locally on open-source models:
 
-    microphone --> Faster-Whisper (STT) --> Ollama LLM (llama3.2) --> Piper (TTS)
+    microphone --> Faster-Whisper (STT) --> llama3.2 (Ollama) --> Piper (TTS)
+                              |
+              (on analyse) transcript + prior issues --> structured report
 
-No FastAPI, no LangGraph, no database. Run with:
+Run with:
     streamlit run english_coach/frontend/voice_bot.py
 """
 
@@ -15,50 +18,34 @@ from __future__ import annotations
 
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 _root = Path(__file__).resolve().parents[2]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # noqa: E402
 from langchain_ollama import ChatOllama  # noqa: E402
 
+from english_coach.coach import db  # noqa: E402
+from english_coach.coach.analysis import analyze  # noqa: E402
+from english_coach.coach.conversation import OPENING, stream_reply, transcript_text  # noqa: E402
+from english_coach.coach.schema import METRICS  # noqa: E402
 from english_coach.core.settings import settings  # noqa: E402
 from english_coach.speech.speech_to_text import SpeechToTextService  # noqa: E402
 from english_coach.speech.text_to_speech import TextToSpeechService  # noqa: E402
 
-CHAT_SYSTEM = (
-    "You are a warm, curious voice conversation partner. You can chat about "
-    "any everyday topic - hobbies, travel, food, films, work, plans, ideas. "
-    "Keep every reply short and natural, like spoken language (1-3 sentences). "
-    "Always finish with a friendly question so the conversation keeps flowing. "
-    "Never lecture, never use bullet lists."
-)
-
-FEEDBACK_SYSTEM = (
-    "You are a kind communication coach. You are given a transcript of a "
-    "spoken conversation. Look only at the USER's messages and give brief, "
-    "encouraging feedback on their spoken English and communication. "
-    "Reply in short markdown with exactly these sections:\n"
-    "**Overall** - one or two encouraging sentences.\n"
-    "**What went well** - 2-3 short points.\n"
-    "**Suggestions** - 2-3 concrete, kind tips.\n"
-    "Keep it under 180 words. Do not invent details that are not in the transcript."
-)
-
-OPENING = (
-    "Hey, great to meet you! I'm happy to chat about pretty much anything - "
-    "hobbies, travel, food, films, whatever's on your mind. "
-    "So, what have you been up to lately?"
-)
+_STATUS = {
+    "improved": ("🟢", "Improved"),
+    "unchanged": ("🟡", "Unchanged"),
+    "worse": ("🔴", "Worse"),
+}
 
 
 # ── Cached heavy resources (load once per Streamlit server) ──────────────────
 @st.cache_resource(show_spinner="Loading language model...")
-def get_llm() -> ChatOllama:
+def get_chat_llm() -> ChatOllama:
     return ChatOllama(
         model=settings.voice_model,
         base_url=settings.ollama_host,
@@ -80,36 +67,22 @@ def get_tts() -> TextToSpeechService:
     return service
 
 
-# ── Core helpers ─────────────────────────────────────────────────────────────
-def generate_reply(messages: list[dict]) -> str:
-    lc = [SystemMessage(content=CHAT_SYSTEM)]
-    for m in messages:
-        if m["role"] == "user":
-            lc.append(HumanMessage(content=m["content"]))
-        else:
-            lc.append(AIMessage(content=m["content"]))
-    try:
-        return get_llm().invoke(lc).content.strip()
-    except Exception as e:
-        return f"Sorry, I had trouble responding ({e}). Could you try again?"
-
-
+# ── Helpers ──────────────────────────────────────────────────────────────────
 def synthesize(text: str) -> bytes | None:
-    """Turn text into spoken audio bytes, or None if TTS fails."""
     try:
-        tts = get_tts()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             out_path = tmp.name
-        tts.synthesize(text, out_path)
+        get_tts().synthesize(text, out_path)
         data = Path(out_path).read_bytes()
         Path(out_path).unlink(missing_ok=True)
         return data
     except Exception:
-        return None  # voice is optional; text reply still shows
+        return None  # voice is optional; text still shows
 
 
 def transcribe(audio_file) -> str:
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+    suffix = Path(getattr(audio_file, "name", "clip.wav")).suffix or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(audio_file.getvalue())
         path = tmp.name
     try:
@@ -118,119 +91,257 @@ def transcribe(audio_file) -> str:
         Path(path).unlink(missing_ok=True)
 
 
-def generate_feedback(messages: list[dict]) -> str:
-    transcript = "\n".join(
-        f"{'User' if m['role'] == 'user' else 'Bot'}: {m['content']}" for m in messages
-    )
-    try:
-        return get_llm().invoke(
-            [SystemMessage(content=FEEDBACK_SYSTEM), HumanMessage(content=transcript)]
-        ).content.strip()
-    except Exception as e:
-        return f"Could not generate feedback ({e})."
-
-
-def add_turn(user_text: str) -> None:
-    """Append a user message, get + speak the bot's reply."""
+def handle_turn(user_text: str) -> None:
+    """Append the user turn and stream the reply (speaking only if enabled)."""
     st.session_state.messages.append({"role": "user", "content": user_text})
-    with st.spinner("Thinking..."):
-        reply = generate_reply(st.session_state.messages)
-        audio = synthesize(reply)
-    st.session_state.messages.append(
-        {"role": "assistant", "content": reply, "audio": audio}
-    )
+    with st.chat_message("user"):
+        st.markdown(user_text)
+    with st.chat_message("assistant"):
+        full = st.write_stream(stream_reply(get_chat_llm(), st.session_state.messages))
+    audio = synthesize(full) if st.session_state.get("speak") else None
+    st.session_state.messages.append({"role": "assistant", "content": full, "audio": audio})
+
+
+def run_analysis(candidate_id: str, transcript: str, source: str) -> None:
+    with st.status("Analysing your communication…", expanded=True) as status:
+        prior = db.latest_open_issues(candidate_id)
+        if prior:
+            status.write(f"Comparing against {len(prior)} issue(s) from last session…")
+        result = analyze(transcript, prior)
+        open_issues = result.open_issues(prior)
+        db.save_session(candidate_id, source, transcript, result, open_issues)
+        st.session_state.report = {**result.model_dump(), "overall_score": result.overall_score}
+        st.session_state.last_transcript = transcript
+        status.update(label="Analysis complete", state="complete")
 
 
 # ── State ────────────────────────────────────────────────────────────────────
 def init_state() -> None:
+    st.session_state.setdefault("candidate_id", "demo")
     if "messages" not in st.session_state:
-        opening_audio = synthesize(OPENING)
-        st.session_state.messages = [
-            {"role": "assistant", "content": OPENING, "audio": opening_audio}
-        ]
-    st.session_state.setdefault("feedback", None)
+        # No audio on the opening — the bot only speaks if the user opts in,
+        # and nothing is synthesised (or auto-played) on startup.
+        st.session_state.messages = [{"role": "assistant", "content": OPENING}]
+    st.session_state.setdefault("report", None)
     st.session_state.setdefault("mic_nonce", 0)
+    st.session_state.setdefault("upload_text", "")
+    st.session_state.setdefault("speak", False)
+    st.session_state.setdefault("last_transcript", "")
 
 
-def reset() -> None:
-    for key in ("messages", "feedback", "mic_nonce"):
+def reset_conversation() -> None:
+    for key in ("messages", "report", "mic_nonce", "upload_text"):
         st.session_state.pop(key, None)
+
+
+# ── Report + progress rendering ──────────────────────────────────────────────
+def render_report(report: dict) -> None:
+    with st.container(border=True):
+        st.subheader("Your report")
+        cols = st.columns(len(METRICS) + 1)
+        cols[0].metric("Overall", f"{report.get('overall_score', 0):.0f}")
+        for col, metric in zip(cols[1:], METRICS):
+            col.metric(metric.capitalize(), report.get("scores", {}).get(metric, 0))
+
+        if report.get("summary"):
+            st.write(report["summary"])
+
+        if report.get("strengths"):
+            st.markdown("**✅ What went well**")
+            for s in report["strengths"]:
+                st.markdown(f"- {s}")
+
+        verdicts = report.get("prior_issue_verdicts", [])
+        if verdicts:
+            st.markdown("**📈 What changed since last session**")
+            for v in verdicts:
+                icon, label = _STATUS.get(v.get("status", "unchanged"), ("🟡", "Unchanged"))
+                st.markdown(f"{icon} **{label}** — {v.get('description', '')}")
+                if v.get("evidence"):
+                    st.caption(v["evidence"])
+
+        new_issues = report.get("new_issues", [])
+        if new_issues:
+            st.markdown("**⚠️ What to work on**")
+            for it in new_issues:
+                st.markdown(
+                    f"- {it.get('description', '')} "
+                    f"*({it.get('category', 'general')}, {it.get('severity', 'medium')})*"
+                )
+
+        if st.session_state.get("last_transcript"):
+            st.download_button(
+                "Download transcript",
+                data=st.session_state.last_transcript,
+                file_name=f"{st.session_state.candidate_id}_transcript.txt",
+                mime="text/plain",
+                icon=":material/download:",
+            )
+
+
+def _issue_tracker(sessions: list[dict]) -> pd.DataFrame:
+    agg: dict[str, dict] = {}
+    for s in sessions:
+        for it in s["new_issues"]:
+            desc = it["description"]
+            row = agg.setdefault(
+                desc,
+                {
+                    "issue": desc,
+                    "category": it.get("category", "general"),
+                    "severity": it.get("severity", "medium"),
+                    "sessions_flagged": 0,
+                    "latest_status": "open",
+                },
+            )
+            row["sessions_flagged"] += 1
+        for v in s["verdicts"]:
+            if v["description"] in agg:
+                agg[v["description"]]["latest_status"] = v["status"]
+    return pd.DataFrame(list(agg.values()))
+
+
+def render_progress(candidate_id: str) -> None:
+    st.title("Progress")
+    st.caption(f"Communication trends for `{candidate_id}`")
+    sessions = db.all_sessions(candidate_id)
+    if not sessions:
+        st.info("No analysed sessions yet. Have a conversation and analyse it first.")
+        return
+
+    rows = []
+    for i, s in enumerate(sessions, 1):
+        row = {"session": f"S{i}", "overall": s["overall_score"]}
+        row.update(s["scores"])
+        rows.append(row)
+    df = pd.DataFrame(rows)
+
+    first, latest = sessions[0], sessions[-1]
+    delta = round(latest["overall_score"] - first["overall_score"], 1) if len(sessions) > 1 else None
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Sessions", len(sessions))
+    c2.metric("Latest overall", f"{latest['overall_score']:.0f}", delta=delta)
+    c3.metric("Best overall", f"{max(s['overall_score'] for s in sessions):.0f}")
+
+    st.subheader("Score trend")
+    st.line_chart(df, x="session", y=["overall", *METRICS], height=300)
+
+    st.subheader("Issue tracker")
+    tracker = _issue_tracker(sessions)
+    if tracker.empty:
+        st.caption("No issues flagged yet.")
+    else:
+        st.dataframe(tracker, hide_index=True, width="stretch")
+
+
+# ── Practice view ────────────────────────────────────────────────────────────
+def render_practice(candidate_id: str) -> None:
+    st.title("Communication coach")
+    st.caption("Chat, upload a transcript, or upload audio — then analyse it.")
+
+    if st.session_state.report:
+        render_report(st.session_state.report)
+        st.divider()
+
+    method = st.segmented_control(
+        "Input",
+        ["Live text", "Live voice", "Upload transcript", "Upload audio"],
+        default="Live text",
+    )
+
+    if method in ("Live text", "Live voice"):
+        _render_live(candidate_id, method)
+    else:
+        _render_upload(candidate_id, method)
+
+
+def _render_live(candidate_id: str, method: str) -> None:
+    st.toggle(
+        "🔊 Speak the bot's replies",
+        key="speak",
+        help="Off by default. When on, each reply is voiced so you can play it — it never auto-plays.",
+    )
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg.get("audio"):
+                st.audio(msg["audio"], format="audio/wav", autoplay=False)
+
+    has_user_turn = any(m["role"] == "user" for m in st.session_state.messages)
+    if has_user_turn:
+        end_col, dl_col = st.columns(2)
+        if end_col.button("End conversation & analyse", type="primary", width="stretch"):
+            run_analysis(candidate_id, transcript_text(st.session_state.messages), "live")
+            st.rerun()
+        dl_col.download_button(
+            "Download transcript",
+            data=transcript_text(st.session_state.messages),
+            file_name=f"{candidate_id}_transcript.txt",
+            mime="text/plain",
+            width="stretch",
+        )
+
+    if method == "Live text":
+        if prompt := st.chat_input("Type a message..."):
+            handle_turn(prompt)
+            st.rerun()
+    else:
+        clip = st.audio_input("Record a message", key=f"mic_{st.session_state.mic_nonce}")
+        if clip:
+            with st.spinner("Listening..."):
+                text = transcribe(clip)
+            if text.strip():
+                handle_turn(text)
+            else:
+                st.warning("I couldn't hear anything — try again.")
+            st.session_state.mic_nonce += 1
+            st.rerun()
+
+
+def _render_upload(candidate_id: str, method: str) -> None:
+    if method == "Upload transcript":
+        uploaded = st.file_uploader("Transcript (.txt)", type=["txt"])
+        if uploaded is not None:
+            st.session_state.upload_text = uploaded.getvalue().decode("utf-8", "replace")
+        source = "upload_transcript"
+    else:
+        uploaded = st.file_uploader("Audio file", type=["wav", "mp3", "m4a", "ogg"])
+        if uploaded is not None and st.button("Transcribe"):
+            with st.spinner("Transcribing…"):
+                st.session_state.upload_text = transcribe(uploaded)
+        source = "upload_audio"
+
+    if st.session_state.upload_text:
+        st.text_area("Transcript to analyse", st.session_state.upload_text, height=200, disabled=True)
+        if st.button("Analyse", type="primary", width="stretch"):
+            run_analysis(candidate_id, st.session_state.upload_text, source)
+            st.rerun()
 
 
 # ── Page ─────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Voice Bot",
+    page_title="Communication Coach",
     page_icon=":material/graphic_eq:",
     layout="centered",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 init_state()
 
-st.title("Voice Bot")
-st.caption("Have a chat about anything. When you're done, end the conversation for feedback.")
-
-@st.dialog("Your feedback", width="large")
-def feedback_dialog() -> None:
-    """Show feedback in a centred modal so it can't be missed.
-
-    The old inline version rendered at the top of the page; a user scrolled
-    down at the mic saw neither the spinner nor the result. Generating inside
-    the dialog keeps the "analysing…" state on-screen the whole time.
-    """
-    user_turns = [m for m in st.session_state.messages if m["role"] == "user"]
-    if not user_turns:
-        st.warning("Say something first, then end the conversation for feedback.")
-        return
-    if st.session_state.get("feedback") is None:
-        with st.spinner("Analysing your conversation… (this can take up to a minute on CPU)"):
-            st.session_state.feedback = generate_feedback(st.session_state.messages)
-    st.markdown(st.session_state.feedback)
-
-
-with st.sidebar:
-    st.markdown("**Conversation**")
-    st.caption(f"Model: `{settings.voice_model}` (offline via Ollama)")
-    end_clicked = st.button(
-        "End conversation & get feedback", width="stretch", type="primary"
-    )
+# Top controls live in the main area (not the sidebar) so they can't vanish if
+# Streamlit collapses the sidebar off-screen.
+id_col, reset_col = st.columns([3, 1], vertical_alignment="bottom")
+with id_col:
+    st.text_input("Candidate ID", key="candidate_id")
+with reset_col:
     if st.button("Start over", width="stretch"):
-        reset()
+        reset_conversation()
         st.rerun()
 
-# Open the feedback modal when the user ends the conversation.
-if end_clicked:
-    st.session_state.feedback = None  # force a fresh analysis each time
-    feedback_dialog()
+view = st.segmented_control("View", ["Practice", "Progress"], default="Practice") or "Practice"
+st.caption(f"Model: `{settings.voice_model}` (offline via Ollama)")
 
-# Keep the feedback on the page too, so it can be re-read after the modal closes.
-if st.session_state.feedback:
-    with st.container(border=True):
-        st.subheader("Your feedback")
-        st.markdown(st.session_state.feedback)
-    st.divider()
-
-# Conversation history.
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg.get("audio"):
-            st.audio(msg["audio"], format="audio/wav", autoplay=False)
-
-# Input: voice by default, text as a reliable fallback.
-mode = st.segmented_control("Input", ["Voice", "Text"], default="Voice")
-
-if mode == "Text":
-    if prompt := st.chat_input("Type a message..."):
-        add_turn(prompt)
-        st.rerun()
+if view == "Progress":
+    render_progress(st.session_state.candidate_id)
 else:
-    audio_value = st.audio_input("Record a message", key=f"mic_{st.session_state.mic_nonce}")
-    if audio_value:
-        with st.spinner("Listening..."):
-            text = transcribe(audio_value)
-        if text.strip():
-            add_turn(text)
-        else:
-            st.warning("I couldn't hear anything - try recording again.")
-        st.session_state.mic_nonce += 1  # reset the recorder for the next turn
-        st.rerun()
+    render_practice(st.session_state.candidate_id)

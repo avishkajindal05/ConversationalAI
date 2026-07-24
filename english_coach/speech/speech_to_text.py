@@ -33,8 +33,13 @@ class SpeechToTextService:
             self.load_model()
             
         logger.info("Transcribing audio file: %s", audio_path)
-        segments, info = self._model.transcribe(audio_path, beam_size=5)
-        
+        # Tuned for CPU: greedy decoding (beam_size=1) and a voice-activity
+        # filter to skip silence are far faster than beam search with only a
+        # small accuracy cost on clear speech.
+        segments, info = self._model.transcribe(
+            audio_path, beam_size=1, vad_filter=True
+        )
+
         text = " ".join([segment.text for segment in segments]).strip()
         logger.debug("Transcription complete: %s", text)
         return text
