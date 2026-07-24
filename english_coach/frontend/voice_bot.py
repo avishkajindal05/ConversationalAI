@@ -169,25 +169,40 @@ init_state()
 st.title("Voice Bot")
 st.caption("Have a chat about anything. When you're done, end the conversation for feedback.")
 
+@st.dialog("Your feedback", width="large")
+def feedback_dialog() -> None:
+    """Show feedback in a centred modal so it can't be missed.
+
+    The old inline version rendered at the top of the page; a user scrolled
+    down at the mic saw neither the spinner nor the result. Generating inside
+    the dialog keeps the "analysing…" state on-screen the whole time.
+    """
+    user_turns = [m for m in st.session_state.messages if m["role"] == "user"]
+    if not user_turns:
+        st.warning("Say something first, then end the conversation for feedback.")
+        return
+    if st.session_state.get("feedback") is None:
+        with st.spinner("Analysing your conversation… (this can take up to a minute on CPU)"):
+            st.session_state.feedback = generate_feedback(st.session_state.messages)
+    st.markdown(st.session_state.feedback)
+
+
 with st.sidebar:
     st.markdown("**Conversation**")
     st.caption(f"Model: `{settings.voice_model}` (offline via Ollama)")
-    if st.button("End conversation & get feedback", width="stretch", type="primary"):
-        st.session_state.pending_feedback = True
+    end_clicked = st.button(
+        "End conversation & get feedback", width="stretch", type="primary"
+    )
     if st.button("Start over", width="stretch"):
         reset()
         st.rerun()
 
-# Feedback view (after the user ends the conversation).
-if st.session_state.get("pending_feedback"):
-    st.session_state.pending_feedback = False
-    user_turns = [m for m in st.session_state.messages if m["role"] == "user"]
-    if not user_turns:
-        st.warning("Say something first, then end the conversation for feedback.")
-    else:
-        with st.spinner("Analysing your conversation..."):
-            st.session_state.feedback = generate_feedback(st.session_state.messages)
+# Open the feedback modal when the user ends the conversation.
+if end_clicked:
+    st.session_state.feedback = None  # force a fresh analysis each time
+    feedback_dialog()
 
+# Keep the feedback on the page too, so it can be re-read after the modal closes.
 if st.session_state.feedback:
     with st.container(border=True):
         st.subheader("Your feedback")
