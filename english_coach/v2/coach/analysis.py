@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from pydantic import ValidationError
 
-from english_coach.coach.schema import Analysis, validate_llm_payload
+from english_coach.v2.coach.schema import Analysis, validate_llm_payload
 from english_coach.core.logger import logger
 from english_coach.core.settings import settings
 

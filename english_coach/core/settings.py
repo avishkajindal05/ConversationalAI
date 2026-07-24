@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     # Evaluation graph, reasoning-heavy steps (recommendation/report): the
     # larger model, for richer language generation.
     reasoning_model: str = Field(default="qwen3:8b-instruct-q4")
-    # Minimal single-process voice bot (frontend/voice_bot.py): a small, fast
-    # model so voice turns stay responsive on CPU.
+    # v2 Communication Coach (v2/app.py): a small, fast model so chat + analysis
+    # stay responsive on CPU. This is the only model v2 needs.
     voice_model: str = Field(default="llama3.2")
     whisper_model: str = Field(default="small")
     piper_model: str = Field(default="en_US-lessac-medium")

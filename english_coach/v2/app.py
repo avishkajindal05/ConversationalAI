@@ -1,4 +1,4 @@
-# ─── frontend/voice_bot.py ───
+# ─── v2/app.py ───
 """Communication coach - single-process voice bot.
 
 Have a spoken or typed conversation (or upload a transcript / audio file);
@@ -11,7 +11,7 @@ runs locally on open-source models:
               (on analyse) transcript + prior issues --> structured report
 
 Run with:
-    streamlit run english_coach/frontend/voice_bot.py
+    streamlit run english_coach/v2/app.py
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 from langchain_ollama import ChatOllama  # noqa: E402
 
-from english_coach.coach import db  # noqa: E402
-from english_coach.coach.analysis import analyze  # noqa: E402
-from english_coach.coach.conversation import OPENING, stream_reply, transcript_text  # noqa: E402
-from english_coach.coach.schema import METRICS  # noqa: E402
+from english_coach.v2.coach import db  # noqa: E402
+from english_coach.v2.coach.analysis import analyze  # noqa: E402
+from english_coach.v2.coach.conversation import OPENING, stream_reply, transcript_text  # noqa: E402
+from english_coach.v2.coach.schema import METRICS  # noqa: E402
 from english_coach.core.settings import settings  # noqa: E402
 from english_coach.speech.speech_to_text import SpeechToTextService  # noqa: E402
 from english_coach.speech.text_to_speech import TextToSpeechService  # noqa: E402
