@@ -48,6 +48,15 @@ ID**, pick an input method, have the conversation (or upload), then
 **Progress** to see score trends and the issue tracker across sessions with the
 same ID.
 
+**Want data to look at right away?** Seed a few demo users with real
+multi-session conversations and reports, then open **Progress** for any of them:
+```bash
+python -m english_coach.v2.seed_demo --reset
+# then enter Candidate ID: priya_demo, rahul_demo, or sara_demo
+```
+Each learner is a separate history keyed only by that Candidate ID — see
+[docs/v2/data-model.md](english_coach/docs/v2/data-model.md#multiple-users).
+
 ### How it works
 ```
 live text / live voice / upload transcript / upload audio

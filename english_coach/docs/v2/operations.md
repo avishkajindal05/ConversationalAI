@@ -14,7 +14,19 @@ model, Ollama host, Whisper model, and Piper model settings.
 ```powershell
 streamlit run english_coach/v2/app.py
 .venv\Scripts\python.exe -m pytest english_coach/tests -q
+
+# Populate demo users with real multi-session conversations and reports
+.venv\Scripts\python.exe -m english_coach.v2.seed_demo --reset
 ```
+
+## Demo data
+
+`seed_demo.py` creates three candidates — `priya_demo` (steady improver),
+`rahul_demo` (a rambler whose clarity issue eases over time), and `sara_demo`
+(consistently strong) — by running the real analysis pipeline across several
+sessions each. Enter one of those IDs in the app and open **Progress** to see
+score trends and the issue tracker. `--reset` clears only those demo IDs first,
+so the script is safe to re-run and never touches real learner rows.
 
 ## Coverage
 

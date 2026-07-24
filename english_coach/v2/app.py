@@ -29,7 +29,7 @@ import streamlit as st  # noqa: E402
 from langchain_ollama import ChatOllama  # noqa: E402
 
 from english_coach.v2.coach import db  # noqa: E402
-from english_coach.v2.coach.analysis import analyze  # noqa: E402
+from english_coach.v2.coach.analysis import NOT_ENOUGH_SUMMARY, analyze  # noqa: E402
 from english_coach.v2.coach.conversation import OPENING, stream_reply, transcript_text  # noqa: E402
 from english_coach.v2.coach.schema import METRICS  # noqa: E402
 from english_coach.core.settings import settings  # noqa: E402
@@ -111,6 +111,11 @@ def run_analysis(candidate_id: str, transcript: str, source: str) -> None:
         if prior:
             status.write(f"Comparing against {len(prior)} issue(s) from last session…")
         result = analyze(transcript, prior)
+        if result.summary == NOT_ENOUGH_SUMMARY:
+            # Not a real evaluation — don't pollute the progress history with it.
+            status.update(label="Not enough to analyse yet", state="error")
+            st.warning(NOT_ENOUGH_SUMMARY)
+            return
         open_issues = result.open_issues(prior)
         db.save_session(candidate_id, source, transcript, result, open_issues)
         st.session_state.report = {**result.model_dump(), "overall_score": result.overall_score}

@@ -1,7 +1,7 @@
 # v1 architecture (legacy)
 
 > This document describes the parked FastAPI/LangGraph platform. For the
-> active single-process Communication Coach, see the [v2 architecture](v2/architecture.md).
+> active single-process Communication Coach, see the [v2 architecture](../v2/architecture.md).
 
 ## Overview
 English Coach is an offline Agentic AI English Speaking Coach. Conversation,
