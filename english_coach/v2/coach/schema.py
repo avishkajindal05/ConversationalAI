@@ -129,10 +129,12 @@ def validate_llm_payload(payload: object, prior_issues: list[dict]) -> Analysis:
     """Validate one LLM response before it can update learner data.
 
     Small local models are creative with JSON, so this is tolerant where it can
-    be (extra/missing optional keys, off-list categories, hallucinated verdicts
-    are cleaned away) but strict where it matters: the five scores must be
-    present, and every real prior issue must be judged so history is never
-    silently lost.
+    be (extra/missing optional keys, off-list categories, hallucinated or
+    partial verdicts are cleaned away). The only hard requirement is that the
+    five scores are present. Prior-issue verdicts are best-effort: any prior
+    issue the model does not (or cannot) judge is left open by
+    ``Analysis.open_issues`` rather than blocking the whole report — a coach
+    reviewing one short conversation can't always re-assess every past issue.
     """
     if not isinstance(payload, dict):
         raise ValueError("Analysis response must be a JSON object")
@@ -151,20 +153,40 @@ def validate_llm_payload(payload: object, prior_issues: list[dict]) -> Analysis:
         "new_issues": payload.get("new_issues") or [],
     }
 
-    # Drop verdicts that don't match a real prior issue (hallucinations) and
-    # de-duplicate, then require that every real prior issue is still covered.
-    expected = {issue["description"] for issue in prior_issues}
+    # Match returned verdicts to real prior issues tolerantly (exact, or one
+    # description contained in the other, since a small model rarely echoes a
+    # long prior description verbatim). Keep one verdict per prior issue and
+    # canonicalise its description; drop anything that matches nothing.
+    def _norm(text: object) -> str:
+        return " ".join(str(text).lower().split())
+
+    prior_norm = {_norm(i["description"]): i["description"] for i in prior_issues}
     seen: set[str] = set()
     kept: list[dict] = []
     for verdict in cleaned["prior_issue_verdicts"]:
         if not isinstance(verdict, dict):
             continue
-        desc = verdict.get("description")
-        if desc in expected and desc not in seen:
-            seen.add(desc)
+        vd = _norm(verdict.get("description", ""))
+        match = prior_norm.get(vd)
+        if match is None:
+            for pn, original in prior_norm.items():
+                if pn and (pn in vd or vd in pn):
+                    match = original
+                    break
+        if match and match not in seen:
+            seen.add(match)
+            verdict["description"] = match  # canonicalise to the stored wording
             kept.append(verdict)
     cleaned["prior_issue_verdicts"] = kept
-    if seen != expected:
-        raise ValueError("Analysis response must return one verdict for every prior issue")
 
+    # Drop placeholder "no issue" entries the model sometimes emits as a new issue.
+    _placeholder = {"", "none", "none observed", "no issues", "no new issues", "n/a", "na"}
+    cleaned["new_issues"] = [
+        it
+        for it in cleaned["new_issues"]
+        if isinstance(it, dict) and _norm(it.get("description", "")) not in _placeholder
+    ]
+
+    # No hard failure on partial coverage: unjudged prior issues stay open via
+    # Analysis.open_issues, so learner history is preserved without blocking.
     return Analysis.model_validate(cleaned)

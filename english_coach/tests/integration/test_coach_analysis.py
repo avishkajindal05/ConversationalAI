@@ -45,16 +45,18 @@ def test_analyze_retries_then_succeeds():
     assert llm.invoke.call_count == 2
 
 
-def test_analyze_retries_when_a_prior_issue_verdict_is_missing():
+def test_analyze_accepts_partial_prior_coverage_without_retry():
+    # A response that omits a prior-issue verdict is accepted (no retry); the
+    # unjudged issue is carried forward as still-open rather than failing.
     incomplete = {**_GOOD, "prior_issue_verdicts": []}
     llm = MagicMock()
-    llm.invoke.side_effect = [_Resp(json.dumps(incomplete)), _Resp(json.dumps(_GOOD))]
-    prior = [{"description": "filler words"}]
+    llm.invoke.return_value = _Resp(json.dumps(incomplete))
+    prior = [{"description": "filler words", "category": "fluency", "severity": "low"}]
     with patch("english_coach.v2.coach.analysis.ChatOllama", return_value=llm):
         result = analyze("transcript", prior_issues=prior)
 
-    assert result.prior_issue_verdicts[0].description == "filler words"
-    assert llm.invoke.call_count == 2
+    assert llm.invoke.call_count == 1
+    assert any(i["description"] == "filler words" for i in result.open_issues(prior))
 
 
 def test_analyze_returns_safe_default_when_all_attempts_fail():

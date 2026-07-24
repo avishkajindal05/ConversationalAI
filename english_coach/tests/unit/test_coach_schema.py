@@ -66,7 +66,7 @@ def test_open_issues_keeps_prior_issue_when_verdict_is_omitted():
     assert analysis.open_issues(prior) == prior
 
 
-def test_llm_payload_requires_complete_scores_and_prior_verdict_coverage():
+def test_llm_payload_requires_complete_scores():
     payload = {
         "scores": {"fluency": 60, "clarity": 60, "vocabulary": 60, "grammar": 60},
         "summary": "s",
@@ -77,6 +77,36 @@ def test_llm_payload_requires_complete_scores_and_prior_verdict_coverage():
     with pytest.raises(ValueError, match="all five score metrics"):
         validate_llm_payload(payload, [])
 
-    payload["scores"]["confidence"] = 60
-    with pytest.raises(ValueError, match="one verdict for every prior issue"):
-        validate_llm_payload(payload, [{"description": "filler words"}])
+
+def test_llm_payload_accepts_partial_prior_coverage():
+    # With complete scores, a missing prior verdict no longer fails — the report
+    # is produced and the unjudged issue is kept open by open_issues().
+    prior = [{"description": "filler words", "category": "fluency", "severity": "low"}]
+    payload = {
+        "scores": {"fluency": 60, "clarity": 60, "vocabulary": 60, "grammar": 60, "confidence": 60},
+        "summary": "s",
+        "strengths": [],
+        "prior_issue_verdicts": [],
+        "new_issues": [],
+    }
+    result = validate_llm_payload(payload, prior)
+    assert result.scores.confidence == 60
+    assert any(i["description"] == "filler words" for i in result.open_issues(prior))
+
+
+def test_llm_payload_matches_prior_verdict_by_partial_description():
+    # The model rarely echoes a long prior description verbatim; a shorter
+    # verdict description that is contained in the prior still matches.
+    prior = [{"description": "uses filler words like 'um' too often", "category": "fluency", "severity": "low"}]
+    payload = {
+        "scores": {"fluency": 60, "clarity": 60, "vocabulary": 60, "grammar": 60, "confidence": 60},
+        "summary": "s",
+        "strengths": [],
+        "prior_issue_verdicts": [{"description": "filler words", "status": "improved", "evidence": "fewer 'um's"}],
+        "new_issues": [],
+    }
+    result = validate_llm_payload(payload, prior)
+    assert len(result.prior_issue_verdicts) == 1
+    assert result.prior_issue_verdicts[0].status == "improved"
+    # canonicalised back to the stored description
+    assert result.prior_issue_verdicts[0].description == prior[0]["description"]
