@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import pytest
 
-from english_coach.coach.schema import Analysis
+from english_coach.v2.coach.schema import Analysis
 
 
 @pytest.fixture()
 def coach_db(tmp_path, monkeypatch):
     """Point coach.db at a temp file and return the module."""
-    import english_coach.coach.db as db
+    import english_coach.v2.coach.db as db
 
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "coach.db")
     db.init_db()

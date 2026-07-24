@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from english_coach.coach.schema import Analysis, Scores, validate_llm_payload
+from english_coach.v2.coach.schema import Analysis, Scores, validate_llm_payload
 
 
 def test_scores_clamp_and_coerce():
